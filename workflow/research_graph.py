@@ -27,7 +27,7 @@ class ResearchWorkflow:
     def _draft_node(self, state: ResearchState) -> dict:
         """Node to draft a response."""
         draft = self.drafter_agent.draft_response(state["query"], state["research_data"])
-        print(f"Initial Response: {draft}")
+        # print(f"Initial Response: {draft}")
         return {"draft_response": draft}
 
     def _refine_node(self, state: ResearchState) -> dict:

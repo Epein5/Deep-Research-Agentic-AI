@@ -24,14 +24,8 @@ class DrafterAgent:
 
     def refine_response(self, draft: str) -> str:
         """Refine the draft for clarity and brevity."""
-        prompt = (
-                    f"Refine this draft for clarity and brevity, keeping the summary clear and consise. (50 words). "
-                    f"If URLs are present, include only the top 3 most relevant ones in the 'list_of_urls' field, "
-                    f"prioritizing those best supporting the summary. Return the response as a JSON object with "
-                    f"'content' (the summary) and 'list_of_urls' (the URL list). Example format:\n"
-                    f'{{"content": "Refined summary", "list_of_urls": ["url1", "url2", "url3"]}}\n\n'
-                    f"Draft: {draft}"
-                )        
+        prompt = f"Refine this draft for clarity and brevity, keeping it concise (around 20-30 words). If URLs are present, include only the top 3 most relevant ones in the source list, prioritizing those best supporting the summary.\n\nDraft: {draft}"
+        
         try:
             response = self.model.generate_content(prompt)
             return response.text if response else "Sorry, I couldn't refine the response."
