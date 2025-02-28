@@ -1,4 +1,3 @@
-# agents/research_agent.py
 from tavily import TavilyClient
 from langchain.schema import Document
 from utils.document_processor import DocumentProcessor

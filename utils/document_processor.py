@@ -1,4 +1,3 @@
-# utils/document_processor.py
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from config import config

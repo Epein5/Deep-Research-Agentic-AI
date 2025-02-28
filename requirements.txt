@@ -1,2 +1,6 @@
 tavily-python
+langchain
+langgraph
+requests
+google-generativeai
 python-dotenv
