@@ -112,14 +112,11 @@ GOOGLE_STUDIO_API_KEY=your_google_studio_api_key
 streamlit run app/streamlit_app.py
 ```
 ## System Components
-1. Research Agent
-The Research Agent is responsible for crawling websites and gathering relevant information. It uses the Tavily API to search the web and processes the results into structured documents.
+**1. Research Agent**: The Research Agent is responsible for crawling websites and gathering relevant information. It uses the Tavily API to search the web and processes the results into structured documents.
 
-2. Drafter Agent
-The Drafter Agent generates and refines responses using the Gemini API. It ensures the responses are clear, concise, and relevant to the user's query.
+**2. Drafter Agent**: The Drafter Agent generates and refines responses using the Gemini API. It ensures the responses are clear, concise, and relevant to the user's query.
 
-3. LangGraph Workflow
-The LangGraph framework manages the workflow, ensuring smooth transitions between research, drafting, and refining stages.
+**3. LangGraph Workflow**: The LangGraph framework manages the workflow, ensuring smooth transitions between research, drafting, and refining stages.
 
 ## Features
 - **Web Crawling:** Uses Tavily API to gather relevant information from the web.
