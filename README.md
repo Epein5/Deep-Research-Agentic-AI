@@ -107,10 +107,38 @@ TAVILY_API_KEY=your_tavily_api_key
 GOOGLE_STUDIO_API_KEY=your_google_studio_api_key
 ```
 
-5.Run the Streamlit Application:
+5. Run the Streamlit Application:
 ```
-streamlit run app/streamlit_app.py
+streamlit run app.py
 ```
+
+## Troubleshooting
+
+### API Quota Issues
+If you encounter "429 Quota exceeded" errors:
+
+1. **Check your API setup**:
+   ```bash
+   streamlit run setup_checker.py
+   ```
+
+2. **Enable Google Cloud APIs**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Enable "Generative Language API"
+   - Set up billing (free tier has very limited quotas)
+
+3. **Request quota increase**:
+   - Navigate to "IAM & Admin" > "Quotas"
+   - Search for "Generative Language API"
+   - Request higher limits
+
+### Common Issues
+- **Empty responses**: Check your API keys are valid
+- **Rate limiting**: The system automatically handles rate limits with delays
+- **No research data**: Verify your Tavily API key is working
+
+### Fallback Mode
+When API quotas are exceeded, the system automatically switches to fallback mode that provides basic text analysis without AI generation.
 ## System Components
 **1. Research Agent**: The Research Agent is responsible for crawling websites and gathering relevant information. It uses the Tavily API to search the web and processes the results into structured documents.
 
