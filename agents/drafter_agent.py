@@ -3,8 +3,15 @@ from langchain.schema import Document
 from config import config
 import time
 import logging
+import os
 from typing import List
 from utils.fallback_generator import FallbackGenerator
+
+# Import Azure OpenAI with fallback
+try:
+    from openai import AzureOpenAI
+except ImportError:
+    AzureOpenAI = None
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +23,6 @@ class DrafterAgent:
         self.model = genai.GenerativeModel("gemini-2.0-flash")  # Use stable version
         self.last_request_time = 0
         self.min_request_interval = 2.0  # Minimum 2 seconds between requests
-        self.max_retries = 3
         self.fallback_generator = FallbackGenerator()
         self.generation_config = genai.types.GenerationConfig(
             temperature=0.7,
@@ -24,6 +30,34 @@ class DrafterAgent:
             top_p=0.8,
             top_k=40
         )
+
+        # Azure OpenAI fallback client (configured via env vars)
+        self.azure_client = None
+        self.azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini-2")
+        azure_key = os.getenv("AZURE_OPENAI_KEY")
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+
+        logger.info(f"Azure config - Deployment: {self.azure_deployment}, Endpoint: {azure_endpoint}")
+        logger.info(f"Azure config - Key present: {bool(azure_key)}, OpenAI module: {bool(AzureOpenAI)}")
+
+        if AzureOpenAI and azure_key and azure_endpoint and self.azure_deployment:
+            try:
+                self.azure_client = AzureOpenAI(
+                    api_version=azure_api_version,
+                    azure_endpoint=azure_endpoint,
+                    api_key=azure_key,
+                )
+                logger.info("✅ Azure OpenAI fallback configured successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to configure Azure OpenAI fallback: {e}")
+        else:
+            missing = []
+            if not AzureOpenAI: missing.append("openai module")
+            if not azure_key: missing.append("AZURE_OPENAI_KEY")
+            if not azure_endpoint: missing.append("AZURE_OPENAI_ENDPOINT") 
+            if not self.azure_deployment: missing.append("AZURE_OPENAI_DEPLOYMENT")
+            logger.warning(f"❌ Azure OpenAI fallback not configured - missing: {', '.join(missing)}")
 
     def _rate_limit(self):
         """Ensure we don't exceed rate limits by waiting between requests."""
@@ -37,74 +71,108 @@ class DrafterAgent:
         
         self.last_request_time = time.time()
 
-    def _make_api_request(self, prompt: str) -> str:
-        """Make API request with retry logic and rate limiting."""
-        for attempt in range(self.max_retries):
-            try:
-                self._rate_limit()
-                logger.info(f"Making API request (attempt {attempt + 1}/{self.max_retries})")
-                
-                response = self.model.generate_content(
-                    prompt, 
-                    generation_config=self.generation_config
-                )
-                
-                if response and response.text:
-                    return response.text
-                else:
-                    logger.warning("Empty response from API")
-                    return "Sorry, I received an empty response from the AI service."
-                    
-            except Exception as e:
-                error_str = str(e)
-                logger.error(f"API request failed (attempt {attempt + 1}): {error_str}")
-                
-                # Handle specific rate limit errors
-                if "429" in error_str or "RATE_LIMIT_EXCEEDED" in error_str:
-                    if attempt < self.max_retries - 1:
-                        wait_time = (attempt + 1) * 10  # Exponential backoff: 10, 20, 30 seconds
-                        logger.info(f"Rate limit exceeded. Waiting {wait_time} seconds before retry...")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        return self._create_fallback_response("Rate limit exceeded. Please try again later.")
-                
-                # Handle quota exceeded errors
-                elif "quota" in error_str.lower() or "GenerateContent request limit" in error_str:
-                    logger.warning("API quota exceeded, using fallback generator")
-                    # Use fallback generator for the research data if available
-                    if hasattr(self, '_current_research_data') and self._current_research_data:
-                        return self.fallback_generator.generate_response(
-                            self._current_query, 
-                            self._current_research_data
-                        )
-                    else:
-                        return self._create_fallback_response(
-                            "API quota exceeded. Please check your Google Cloud Console settings or try again later."
-                        )
-                
-                # Handle other API errors
-                elif attempt == self.max_retries - 1:
-                    return self._create_fallback_response(f"API service unavailable: {error_str}")
-                else:
-                    time.sleep(2)  # Wait 2 seconds before retry
+    def _try_azure_openai(self, prompt: str) -> str:
+        """Try Azure OpenAI as a fallback when Gemini fails."""
+        if not self.azure_client:
+            logger.warning("Azure OpenAI client not configured - cannot use fallback")
+            return None
         
-        return self._create_fallback_response("Unable to generate response after multiple attempts.")
+        try:
+            logger.info("🔗 Attempting Azure OpenAI request...")
+            logger.info(f"📋 Using deployment: {self.azure_deployment}")
+            logger.info(f"🌐 Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT')}")
+            response = self.azure_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful research assistant. Provide clear, comprehensive answers based on the given information."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_completion_tokens=2000,  # Increased from 800 to handle longer responses
+                model=self.azure_deployment
+            )
+            
+            if response.choices and response.choices[0].message:
+                content = response.choices[0].message.content
+                finish_reason = response.choices[0].finish_reason
+                
+                logger.info(f"📄 Raw content: '{content}'")
+                logger.info(f"📊 Content type: {type(content)}")
+                logger.info(f"📏 Content length: {len(content) if content else 'None'}")
+                logger.info(f"🏁 Finish reason: {finish_reason}")
+                
+                if finish_reason == 'length':
+                    logger.warning("⚠️ Response was truncated due to token limit")
+                
+                if content and content.strip():  # Check for non-empty content
+                    logger.info(f"✅ Azure OpenAI succeeded - generated {len(content)} characters")
+                    return content
+                else:
+                    logger.error("❌ Azure OpenAI returned empty or None content")
+                    logger.error(f"📋 Full response choices: {response.choices}")
+                    if finish_reason == 'length':
+                        logger.error("💡 Suggestion: Response was likely truncated - consider reducing prompt size or increasing max_completion_tokens")
+                    return None
+            else:
+                logger.error("❌ Azure OpenAI returned empty response structure")
+                logger.error(f"📋 Response: {response}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Azure OpenAI failed with error: {type(e).__name__}: {str(e)}")
+            return None
+
+    def _make_api_request(self, prompt: str) -> str:
+        """Make API request: try Azure OpenAI first since Gemini has 0 quota."""
+        
+        # Try Azure OpenAI first (since Gemini quota is 0)
+        logger.info("🚀 Trying Azure OpenAI first...")
+        azure_response = self._try_azure_openai(prompt)
+        if azure_response:
+            logger.info("✅ Azure OpenAI successful")
+            return azure_response
+        else:
+            logger.warning("❌ Azure OpenAI failed or returned None")
+        
+        # Fallback to Gemini (will likely fail due to quota)
+        try:
+            self._rate_limit()
+            logger.info("🔄 Azure failed, trying Gemini API as fallback...")
+            
+            response = self.model.generate_content(
+                prompt, 
+                generation_config=self.generation_config
+            )
+            
+            if response and response.text:
+                logger.info("✅ Gemini API successful")
+                return response.text
+            else:
+                logger.warning("Gemini returned empty response")
+                
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"Gemini API failed: {error_str}")
+        
+        # Both services failed - return user-friendly message
+        logger.error("❌ Both Azure OpenAI and Gemini failed")
+        return self._create_server_busy_response()
+
+    def _create_server_busy_response(self) -> str:
+        """Create a user-friendly response when both AI services are unavailable."""
+        return ("🤖 **Server Busy**\n\n"
+                "Our AI services are currently experiencing high demand. "
+                "Please try again in a few moments. If the issue persists, "
+                "it may be due to API quota limits or temporary service disruptions.")
 
     def _create_fallback_response(self, error_message: str) -> str:
         """Create a fallback response when API fails."""
-        return f"""
-            I apologize, but I'm currently unable to generate a response due to API limitations.
-
-            Error: {error_message}
-
-            Please try:
-            1. Waiting a few minutes and trying again
-            2. Checking your Google Cloud Console for API quotas
-            3. Ensuring billing is enabled for your project
-
-            For immediate assistance, you can search for your query manually using the research data that was collected.
-            """
+        # Keep fallback minimal so UI can decide how to present it
+        return f"AI model unavailable: {error_message}"
 
     def draft_response(self, query: str, research_data: List[Document]) -> str:
         """Generate an initial draft response based on research data."""

@@ -69,13 +69,17 @@ class ResearchWorkflow:
             # Extract sources from research data
             sources = self.drafter_agent.get_sources_from_research_data(state["research_data"])
             
-            # Check if draft contains API error messages
-            if "API quota exceeded" in draft or "unable to generate" in draft.lower():
+            # Check if draft contains API / fallback error messages
+            if ("API quota exceeded" in draft or
+                "unable to generate" in draft.lower() or
+                draft.startswith("AI model unavailable:") or
+                "fallback mode" in draft.lower() or
+                "API service unavailable" in draft):
                 logger.warning("Draft generation hit API limits")
                 return {
                     "draft_response": draft,
                     "sources": sources,
-                    "error": "API quota exceeded",
+                    "error": "API service limited",
                     "metadata": {**state.get("metadata", {}), "draft_status": "api_limited"}
                 }
             
@@ -99,7 +103,11 @@ class ResearchWorkflow:
         """Node to refine the draft."""
         try:
             # Skip refinement if there's an error or API is limited
-            if state.get("error") and "quota" in state.get("error", "").lower():
+            if state.get("error") and (
+                "quota" in state.get("error", "").lower() or
+                state.get("draft_response", "").startswith("AI model unavailable:") or
+                "API service unavailable" in state.get("draft_response", "")
+            ):
                 logger.info("Skipping refinement due to API quota limits")
                 return {
                     "final_response": state.get("draft_response", "An error occurred."),

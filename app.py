@@ -434,27 +434,33 @@ def main():
                                 """, unsafe_allow_html=True)
                 
                 else:
-                    # Collect partial sources if any
-                    sources = result.get("sources", [])
-                    if sources:
-                        st.warning("Partial results shown. Please try again later for full answer.")
-                        with sidebar_col:
-                            st.markdown("### 🔗 Sources (Partial)")
-                            for source in sources:
-                                st.markdown(f"""
-                                <div class=\"source-item\">
-                                    <div class=\"source-title\">{source['title']}</div>
-                                    <div class=\"source-url\">
-                                        <a href=\"{source['url']}\" target=\"_blank\">🔗 {source['url']}</a>
+                    # Check if it's a server busy response
+                    response_text = result.get("response", "")
+                    if "Server Busy" in response_text:
+                        # Show the nice server busy message
+                        st.markdown(response_text, unsafe_allow_html=True)
+                    else:
+                        # Collect partial sources if any
+                        sources = result.get("sources", [])
+                        if sources:
+                            st.warning("Partial results shown. Please try again later for full answer.")
+                            with sidebar_col:
+                                st.markdown("### 🔗 Sources (Partial)")
+                                for source in sources:
+                                    st.markdown(f"""
+                                    <div class=\"source-item\">
+                                        <div class=\"source-title\">{source['title']}</div>
+                                        <div class=\"source-url\">
+                                            <a href=\"{source['url']}\" target=\"_blank\">🔗 {source['url']}</a>
+                                        </div>
+                                        <div class=\"source-snippet\">\"{source['snippet']}\"</div>
                                     </div>
-                                    <div class=\"source-snippet\">\"{source['snippet']}\"</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                    st.error("We couldn't generate a full answer. Please retry later. If this keeps happening, check API quota / region settings.")
-                    detailed_err = result.get("error") or result.get("response")
-                    if detailed_err:
-                        with st.expander("Show technical error"):
-                            st.code(detailed_err)
+                                    """, unsafe_allow_html=True)
+                        st.error("We couldn't generate a full answer. Please retry later. If this keeps happening, check API quota / region settings.")
+                        detailed_err = result.get("error") or result.get("response")
+                        if detailed_err:
+                            with st.expander("Show technical error"):
+                                st.code(detailed_err)
                 
             except Exception as e:
                 progress_container.empty()
@@ -464,7 +470,7 @@ def main():
     # Simple footer
     with main_col:
         st.markdown("---")
-        st.markdown("*Powered by Tavily Search & Google Gemini AI*", unsafe_allow_html=True)
+        st.markdown("*Powered by Tavily Search, Azure OpenAI & Google Gemini AI*", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
