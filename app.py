@@ -4,9 +4,7 @@ from favicon_helper import add_custom_favicon, add_custom_css
 import time
 
 def main():
-    # Initialize session state
-    if 'research_in_progress' not in st.session_state:
-        st.session_state.research_in_progress = False
+    # Removed research_in_progress session state handling (was causing issues)
     
     # Page configuration
     st.set_page_config(
@@ -339,19 +337,17 @@ def main():
         
         # Search button
         search_button = st.button(
-            "🔍 Start Research" if not st.session_state.research_in_progress else "⏳ Research in Progress...",
+            "🔍 Start Research",
             type="primary",
-            disabled=st.session_state.research_in_progress
         )
     
     # Handle search
-    if search_button and not st.session_state.research_in_progress:
+    if search_button:
         if not query.strip():
             st.error("Please enter a research question.")
             return
         
-        # Set research in progress
-        st.session_state.research_in_progress = True
+    # Run research immediately (no session state gating)
         
         with main_col:
             # Progress indicator
@@ -386,8 +382,7 @@ def main():
                 # Clear progress
                 progress_container.empty()
                 
-                # Reset research in progress flag
-                st.session_state.research_in_progress = False
+                # (No session flag to reset)
                 
                 # Display results
                 if result.get("success", True):                    
@@ -439,21 +434,31 @@ def main():
                                 """, unsafe_allow_html=True)
                 
                 else:
-                    # Error handling
-                    st.error("❌ Research encountered an issue")
-                    st.write(result.get("response", "An error occurred."))
-                    
-                    if "quota" in result.get("error", "").lower():
-                        st.info("💡 **API Quota Issue**: Try again in a few minutes or check your Google Cloud settings.")
-                
-                # Show warnings if any
-                if result.get("error"):
-                    st.warning(f"⚠️ {result['error']}")
+                    # Collect partial sources if any
+                    sources = result.get("sources", [])
+                    if sources:
+                        st.warning("Partial results shown. Please try again later for full answer.")
+                        with sidebar_col:
+                            st.markdown("### 🔗 Sources (Partial)")
+                            for source in sources:
+                                st.markdown(f"""
+                                <div class=\"source-item\">
+                                    <div class=\"source-title\">{source['title']}</div>
+                                    <div class=\"source-url\">
+                                        <a href=\"{source['url']}\" target=\"_blank\">🔗 {source['url']}</a>
+                                    </div>
+                                    <div class=\"source-snippet\">\"{source['snippet']}\"</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    st.error("We couldn't generate a full answer. Please retry later. If this keeps happening, check API quota / region settings.")
+                    detailed_err = result.get("error") or result.get("response")
+                    if detailed_err:
+                        with st.expander("Show technical error"):
+                            st.code(detailed_err)
                 
             except Exception as e:
                 progress_container.empty()
-                # Reset research in progress flag on error
-                st.session_state.research_in_progress = False
+                # No session flag to reset
                 st.error(f"An unexpected error occurred: {str(e)}")
     
     # Simple footer
