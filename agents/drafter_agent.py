@@ -33,10 +33,10 @@ class DrafterAgent:
 
         # Azure OpenAI fallback client (configured via env vars)
         self.azure_client = None
-        self.azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini-2")
-        azure_key = os.getenv("AZURE_OPENAI_KEY")
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+        self.azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini-2").strip()
+        azure_key = os.getenv("AZURE_OPENAI_KEY", "").strip()
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
+        azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview").strip()
 
         logger.info(f"Azure config - Deployment: {self.azure_deployment}, Endpoint: {azure_endpoint}")
         logger.info(f"Azure config - Key present: {bool(azure_key)}, OpenAI module: {bool(AzureOpenAI)}")
@@ -80,7 +80,7 @@ class DrafterAgent:
         try:
             logger.info("🔗 Attempting Azure OpenAI request...")
             logger.info(f"📋 Using deployment: {self.azure_deployment}")
-            logger.info(f"🌐 Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT')}")
+            logger.info(f"🌐 Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT', '').strip()}")
             response = self.azure_client.chat.completions.create(
                 messages=[
                     {
