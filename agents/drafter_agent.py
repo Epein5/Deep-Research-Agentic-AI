@@ -26,7 +26,7 @@ class DrafterAgent:
         self.fallback_generator = FallbackGenerator()
         self.generation_config = genai.types.GenerationConfig(
             temperature=0.7,
-            max_output_tokens=800,
+            max_output_tokens=600,  # Reduced from 800 to make responses shorter
             top_p=0.8,
             top_k=40
         )
@@ -92,7 +92,7 @@ class DrafterAgent:
                         "content": prompt
                     }
                 ],
-                max_completion_tokens=2000,  # Increased from 800 to handle longer responses
+                max_completion_tokens=1000,  # Increased to prevent truncation
                 model=self.azure_deployment
             )
             
@@ -184,40 +184,46 @@ class DrafterAgent:
         self._current_research_data = research_data
         
         # Limit context to avoid token limits and improve relevance
-        top_docs = research_data[:5]  # Use only top 5 documents
+        top_docs = research_data[:8]  # Reduced from 10 to save tokens
         context = ""
         source_urls = []
         
         for i, doc in enumerate(top_docs, 1):
-            content = doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content
+            content = doc.page_content[:180] + "..." if len(doc.page_content) > 180 else doc.page_content  # Reduced from 250
             url = doc.metadata.get('url', 'URL not available')
             source_urls.append(url)
             context += f"\nSource {i}: {content}\nURL: {url}\n"
         
-        prompt = f"""Based on the research data below, provide a clear and comprehensive answer to this question: "{query}"
-
-IMPORTANT INSTRUCTIONS:
-- Write a well-structured response with key facts and insights
-- Keep it informative but concise
-- DO NOT include a "Sources:" section in your response
-- DO NOT mention URLs or links in your answer
-- DO NOT use placeholder text like "[Insert best source...]" 
-- Focus ONLY on the content and findings
-- The sources will be displayed separately
-
-Research Data with URLs:
-{context}
+        prompt = f"""You are a research assistant providing comprehensive answers based on the latest available information.
 
 Question: {query}
 
-        Please provide ONLY your analysis and findings (NO sources section):"""
+Based on the research data provided below, please provide a clear, well-structured answer that:
+
+1. **Introduces the topic** with context and background
+2. **Presents key findings** in a logical, easy-to-follow structure  
+3. **Includes specific details** and evidence from the sources
+4. **Draws conclusions** or implications where relevant
+5. **Maintains objectivity** and cites supporting evidence
+
+**Formatting Guidelines:**
+- Use **bold** for key terms, important concepts, and main findings
+- Use *italics* for emphasis and subtle highlighting
+- Use `backticks` for technical terms, model names, and specific terminology
+- Structure your response with clear paragraphs for readability
+- Keep your response informative yet concise (150-250 words)
+
+Research Data:
+{context}
+
+Please provide a comprehensive yet accessible answer with appropriate formatting:"""
         
         return self._make_api_request(prompt)
 
     def get_sources_from_research_data(self, research_data: List[Document]) -> List[dict]:
         """Extract source information from research data."""
         sources = []
-        for i, doc in enumerate(research_data[:5], 1):
+        for i, doc in enumerate(research_data, 1):  # Show ALL sources, not just top 5
             url = doc.metadata.get('url', 'URL not available')
             title = doc.metadata.get('title', f'Source {i}')
             sources.append({
@@ -234,16 +240,21 @@ Question: {query}
         if "I apologize, but I'm currently unable" in draft or "API quota exceeded" in draft:
             return draft
             
-        prompt = f"""Please refine the following response to make it:
-1. More concise and clear
-2. Better structured with proper paragraphs
-3. Maintain factual accuracy
-4. DO NOT add any "Sources:" section or URLs
-5. Focus only on improving the content and readability
+        prompt = f"""Please refine and improve this research response to make it more clear, comprehensive, and well-structured:
 
-Draft to refine:
 {draft}
 
-Refined response (content only, no sources):"""
+Refinement guidelines:
+- **Enhance clarity**: Make complex ideas easier to understand
+- **Improve flow**: Ensure logical progression of information
+- **Add structure**: Use paragraphs and transitions for better readability
+- **Maintain accuracy**: Keep all factual information intact
+- **Optimize length**: Aim for 150-250 words of high-quality content
+- **Professional tone**: Write as a knowledgeable research assistant
+- **Add formatting**: Use **bold** for key terms, *italics* for emphasis, and `code` for technical terms
+
+Focus on making the response more engaging and accessible while preserving all key information and insights.
+
+Refined response:"""
         
         return self._make_api_request(prompt)

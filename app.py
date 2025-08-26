@@ -2,12 +2,153 @@ import streamlit as st
 from workflow.research_graph import ResearchWorkflow
 from favicon_helper import add_custom_favicon, add_custom_css
 import time
+from agents.drafter_agent import DrafterAgent
+from agents.research_agent import ResearchAgent
+from langchain.schema import Document
+import os
+
+def stream_research_response(query: str):
+    """Generator function that yields response chunks as they're generated."""
+    try:
+        # Initialize agents
+        research_agent = ResearchAgent()
+        drafter_agent = DrafterAgent()
+
+        # Step 1: Research
+        yield "🔍 Searching for information...\n\n"
+        research_data = research_agent.search(query)
+
+        if not research_data:
+            yield "❌ No relevant research data found. Please try rephrasing your query.\n"
+            return
+
+        yield f"✅ Found {len(research_data)} sources\n\n"
+
+        # Step 2: Generate response with streaming
+        # Removed generating message for cleaner output
+
+        # Limit context to avoid token limits and improve relevance
+        top_docs = research_data[:8]  # Reduced from 10 to save tokens
+        context = ""
+        source_urls = []
+
+        for i, doc in enumerate(top_docs, 1):
+            content = doc.page_content[:180] + "..." if len(doc.page_content) > 180 else doc.page_content  # Reduced from 250
+            url = doc.metadata.get('url', 'URL not available')
+            source_urls.append(url)
+            context += f"\nSource {i}: {content}\nURL: {url}\n"
+
+        prompt = f"""You are a research assistant providing comprehensive answers based on the latest available information.
+
+Question: {query}
+
+Based on the research data provided below, please provide a clear, well-structured answer that:
+
+1. **Introduces the topic** with context and background
+2. **Presents key findings** in a logical, easy-to-follow structure  
+3. **Includes specific details** and evidence from the sources
+4. **Draws conclusions** or implications where relevant
+5. **Maintains objectivity** and cites supporting evidence
+
+**Formatting Guidelines:**
+- Use **bold** for key terms, important concepts, and main findings
+- Use *italics* for emphasis and subtle highlighting
+- Use `backticks` for technical terms, model names, and specific terminology
+- Structure your response with clear paragraphs for readability
+- Keep your response informative yet concise (150-250 words)
+
+Research Data:
+{context}
+
+Please provide a comprehensive yet accessible answer with appropriate formatting:"""
+
+        # Try to stream from Azure OpenAI first
+        if hasattr(drafter_agent, 'azure_client') and drafter_agent.azure_client:
+            try:
+                # Removed writing message for cleaner output
+                response = drafter_agent.azure_client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a knowledgeable research assistant. Provide comprehensive, well-structured answers using paragraphs and clear organization. Be informative yet accessible. Use **bold** for key terms, *italics* for emphasis, and `code` for technical terms. Format naturally for readability."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    max_completion_tokens=800,  # Increased to prevent truncation
+                    model=drafter_agent.azure_deployment,
+                    stream=True  # Enable streaming
+                )
+
+                full_response = ""
+                for chunk in response:
+                    if chunk.choices and len(chunk.choices) > 0:
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, 'content') and delta.content:
+                            content = delta.content
+                            full_response += content
+                            yield content
+
+                # Store the response and sources for later use
+                st.session_state.full_response = full_response
+                st.session_state.sources = []
+                for i, doc in enumerate(research_data, 1):
+                    url = doc.metadata.get('url', 'URL not available')
+                    title = doc.metadata.get('title', f'Source {i}')
+                    st.session_state.sources.append({
+                        'number': i,
+                        'title': title,
+                        'url': url,
+                        'snippet': doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content
+                    })
+
+                # Removed completion message for cleaner output
+                return
+
+            except Exception as e:
+                yield f"\n⚠️ Streaming failed ({str(e)}), falling back to regular generation...\n\n"
+
+        # Fallback to regular generation
+        try:
+            response = drafter_agent._make_api_request(prompt)
+            if response:
+                st.session_state.full_response = response
+                st.session_state.sources = []
+                for i, doc in enumerate(research_data, 1):
+                    url = doc.metadata.get('url', 'URL not available')
+                    title = doc.metadata.get('title', f'Source {i}')
+                    st.session_state.sources.append({
+                        'number': i,
+                        'title': title,
+                        'url': url,
+                        'snippet': doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content
+                    })
+
+                # Yield the response in chunks for visual effect
+                words = response.split()
+                for i in range(0, len(words), 10):
+                    chunk = ' '.join(words[i:i+10])
+                    yield chunk + ' '
+                    time.sleep(0.1)  # Small delay for streaming effect
+
+                # Removed completion message for cleaner output
+            else:
+                yield "\n❌ Failed to generate response. Please try again.\n"
+
+        except Exception as e:
+            yield f"\n❌ Error generating response: {str(e)}\n"
+
+    except Exception as e:
+        yield f"❌ An error occurred: {str(e)}\n"
 
 def main():
     # Removed research_in_progress session state handling (was causing issues)
     
     # Page configuration
     st.set_page_config(
+        
         page_title="Deep Research AI",
         page_icon="🧠",
         # Use wide layout to reduce unused side margins and give columns more width
@@ -31,7 +172,6 @@ def main():
         /* Main container */
         /* Expand usable width & trim side padding */
         .main .block-container {
-            padding-top: 0.5rem;
             padding-left: 1.5rem;
             padding-right: 1.5rem;
             max-width: 90%;
@@ -346,125 +486,49 @@ def main():
         if not query.strip():
             st.error("Please enter a research question.")
             return
-        
-    # Run research immediately (no session state gating)
-        
+
+        # Clear previous results
+        if 'full_response' in st.session_state:
+            del st.session_state.full_response
+        if 'sources' in st.session_state:
+            del st.session_state.sources
+
         with main_col:
-            # Progress indicator
-            progress_container = st.container()
-            with progress_container:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-            
+            # Create containers for streaming output
+            progress_container = st.empty()
+            response_container = st.empty()
+            sources_container = st.empty()
+
             try:
-                # Initialize workflow
-                workflow = ResearchWorkflow()
-                
-                # Step 1: Research
-                status_text.info("🔍 Searching for information...")
-                progress_bar.progress(33)
-                time.sleep(0.5)  # Small delay for visual feedback
-                
-                # Step 2: Processing
-                status_text.info("🤖 Processing and analyzing...")
-                progress_bar.progress(66)
-                
-                # Execute research
-                start_time = time.time()
-                result = workflow.run(query)
-                end_time = time.time()
-                
-                # Step 3: Complete
-                status_text.success("✅ Research completed!")
-                progress_bar.progress(100)
-                time.sleep(0.5)
-                
-                # Clear progress
-                progress_container.empty()
-                
-                # (No session flag to reset)
-                
-                # Display results
-                if result.get("success", True):                    
-                    # Quick metrics with better spacing
-                    st.markdown("### 📊 Research Summary")
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.markdown(
-                            f'<div class="metric-box"><h3>{result.get("num_sources", 0)}</h3><p>Sources Found</p></div>',
-                            unsafe_allow_html=True
-                        )
-                    
-                    with col2:
-                        st.markdown(
-                            f'<div class="metric-box"><h3>{end_time - start_time:.1f}s</h3><p>Processing Time</p></div>',
-                            unsafe_allow_html=True
-                        )
-                    
-                    with col3:
-                        st.markdown(
-                            f'<div class="metric-box"><h3>✅</h3><p>Completed</p></div>',
-                            unsafe_allow_html=True
-                        )
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    # Main research results
-                    st.markdown("### 📋 Research Results")
-                    st.markdown(
-                        f'<div class="answer-body">{result.get("response", "No response generated.")}</div>',
-                        unsafe_allow_html=True
-                    )
-                    
-                    # Display sources in the sidebar
-                    sources = result.get("sources", [])
-                    if sources:
-                        with sidebar_col:
-                            st.markdown("### 🔗 Sources")
-                            for source in sources:
-                                st.markdown(f"""
-                                <div class="source-item">
-                                    <div class="source-title">{source['title']}</div>
-                                    <div class="source-url">
-                                        <a href="{source['url']}" target="_blank">🔗 {source['url']}</a>
-                                    </div>
-                                    <div class="source-snippet">"{source['snippet']}"</div>
+                # Start streaming
+                full_response = ""
+                response_container.markdown("### � Research Results")
+
+                for chunk in stream_research_response(query):
+                    full_response += chunk
+                    # Update the response container with current content
+                    response_container.markdown(f"### 📋 Research Results\n\n{full_response}")
+
+                # Display sources if available
+                if 'sources' in st.session_state and st.session_state.sources:
+                    with sidebar_col:
+                        st.markdown(f"### 🔗 Sources ({len(st.session_state.sources)} found)")
+                        for source in st.session_state.sources:
+                            st.markdown(f"""
+                            <div class="source-item">
+                                <div class="source-title">{source['title']}</div>
+                                <div class="source-url">
+                                    <a href="{source['url']}" target="_blank">🔗 {source['url']}</a>
                                 </div>
-                                """, unsafe_allow_html=True)
-                
-                else:
-                    # Check if it's a server busy response
-                    response_text = result.get("response", "")
-                    if "Server Busy" in response_text:
-                        # Show the nice server busy message
-                        st.markdown(response_text, unsafe_allow_html=True)
-                    else:
-                        # Collect partial sources if any
-                        sources = result.get("sources", [])
-                        if sources:
-                            st.warning("Partial results shown. Please try again later for full answer.")
-                            with sidebar_col:
-                                st.markdown("### 🔗 Sources (Partial)")
-                                for source in sources:
-                                    st.markdown(f"""
-                                    <div class=\"source-item\">
-                                        <div class=\"source-title\">{source['title']}</div>
-                                        <div class=\"source-url\">
-                                            <a href=\"{source['url']}\" target=\"_blank\">🔗 {source['url']}</a>
-                                        </div>
-                                        <div class=\"source-snippet\">\"{source['snippet']}\"</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                        st.error("We couldn't generate a full answer. Please retry later. If this keeps happening, check API quota / region settings.")
-                        detailed_err = result.get("error") or result.get("response")
-                        if detailed_err:
-                            with st.expander("Show technical error"):
-                                st.code(detailed_err)
-                
+                                <div class="source-snippet">"{source['snippet']}"</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                # Clear progress container
+                progress_container.empty()
+
             except Exception as e:
                 progress_container.empty()
-                # No session flag to reset
                 st.error(f"An unexpected error occurred: {str(e)}")
     
     # Simple footer
